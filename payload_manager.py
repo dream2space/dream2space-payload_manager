@@ -1,12 +1,15 @@
-from apscheduler.schedulers.background import BackgroundScheduler
-from Downlink_Util import execute_downlink
-from Command_Parser import Command_Parser
-from Mission_Util import execute_mission
-from picamera import PiCamera
-import parameters as param
-import serial
-import sys
 import os
+import sys
+import time
+
+import serial
+from apscheduler.schedulers.background import BackgroundScheduler
+from picamera import PiCamera
+
+import Mission_Parameters as param
+from Command_Parser import Command_Parser
+from Downlink_Util import execute_downlink
+from Mission_Util import execute_mission
 
 
 def main(use_camera, use_downlink):
@@ -45,14 +48,22 @@ def main(use_camera, use_downlink):
         sys.exit()
 
     try:
-
+        print("Waiting for commands...")
         # Read payload command from serial
         while True:
-            print("Waiting for commands...")
             try:
-                read_command = ser_cmd_input.readline().decode("utf-8").replace("\r\n", "")
+                read_command = ser_cmd_input.readline().decode("utf-8").replace('\r', '').replace('\n', '')
             except UnicodeDecodeError:
                 print("\nUnicode Decode Error\n")
+                ser_cmd_input.flush()
+                time.sleep(1)
+                # Request for command again from Payload Computer
+                ser_cmd_input.write(b"bcc\r\n")
+                continue  # To re-read command from serial
+
+            except ValueError:
+                print("\nValue Error! Request from payload computer again\n")
+                time.sleep(1)
                 # Request for command again from Payload Computer
                 ser_cmd_input.write(b"bcc\r\n")
                 continue  # To re-read command from serial
@@ -83,6 +94,19 @@ def main(use_camera, use_downlink):
                 down_timestamp = parsed_command.get_down_timestamp()
                 scheduler.add_job(execute_downlink, next_run_time=down_timestamp, args=[
                     ser_downlink, mission_folder_path])
+
+            # Request again if command is unknown
+            elif parsed_command.get_type() == 'unknown':
+                time.sleep(1)
+                # Request for command again from Payload Computer
+                ser_cmd_input.write(b"bcc\r\n")
+                continue  # To re-read command from serial
+
+            # ignore blank command
+            elif parsed_command.get_type() == 'blank':
+                continue
+
+            print("\n\nWaiting for commands...")
 
     except KeyboardInterrupt:
         scheduler.shutdown()

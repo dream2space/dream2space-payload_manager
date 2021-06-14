@@ -1,9 +1,10 @@
-from ccsds_packet import CCSDS_Chunk_Packet, CCSDS_Control_Packet
-from parameters import *
-import subprocess
-import pprint
-import time
 import os
+import pprint
+import subprocess
+import time
+
+import Mission_Parameters as mission_params
+from CCSDS_Packet import CCSDS_Chunk_Packet, CCSDS_Control_Packet
 
 
 # Given mission folder path, obtain list of images path
@@ -63,36 +64,28 @@ def prepare_tx_batch(enc_img_bytes):
         return batch_arr
 
     # Chop up bytes into chunks and prepare CCSDS packet
-    chunk_list = chop_bytes(enc_img_bytes, PRE_ENC_CHUNK_SIZE)
+    chunk_list = chop_bytes(enc_img_bytes, mission_params.PRE_ENC_CHUNK_SIZE)
 
     # Split chunks into batches
-    batch_list = split_batch(chunk_list, BATCH_SIZE)
+    batch_list = split_batch(chunk_list, mission_params.BATCH_SIZE)
 
     # Create CCSDS Packets
     packet_batch_list = []
     packet_seq_num = 1
+    chunk_num = 1
     for batch_num in range(len(batch_list)):
         batch = batch_list[batch_num]
 
-        chunk_num = 1
         new_batch = []
         for chunk in batch:
             # Create CCSDS Packet for each chunk
             packet = CCSDS_Chunk_Packet(
-                packet_seq_num, TELEMETRY_PACKET_TYPE_DOWNLINK_PACKET, batch_num+1, chunk_num, chunk)
+                packet_seq_num, mission_params.TELEMETRY_PACKET_TYPE_DOWNLINK_PACKET, batch_num+1, chunk_num, chunk)
             new_batch.append(packet)
             packet_seq_num += 1
             chunk_num += 1
 
-        # Put stop packet at all batches but not the last batch
-        if batch_num != len(batch_list)-1:
-            stop_packet = CCSDS_Control_Packet(
-                packet_seq_num, TELEMETRY_PACKET_TYPE_DOWNLINK_STOP, 0, 0)
-            new_batch.append(stop_packet)
-            packet_seq_num += 1
-
         packet_batch_list.append(new_batch)
-
     return packet_batch_list
 
 
@@ -102,6 +95,9 @@ def execute_downlink(ser_downlink, mission_folder_path):
     filepath_list = obtain_downlink_images_filepaths(mission_folder_path)
     print("Downlink images:")
     pprint.pprint(filepath_list)  # Print list of files for debug
+
+    # Timeout count
+    timeout_count = 0
 
     # Handle downlink of each image via filepath
     for filepath in filepath_list:
@@ -115,9 +111,9 @@ def execute_downlink(ser_downlink, mission_folder_path):
 
         # Send CCSDS Start Packet
         start_packet = CCSDS_Control_Packet(
-            0, TELEMETRY_PACKET_TYPE_DOWNLINK_START, len(enc_img_bytes), len(batches))
+            0, mission_params.TELEMETRY_PACKET_TYPE_DOWNLINK_START, len(enc_img_bytes), len(batches))
         ser_downlink.write(start_packet.get_tx_packet())
-        time.sleep(TIME_SLEEP_AFTER_START)
+        time.sleep(mission_params.TIME_SLEEP_AFTER_START)
 
         # Start sending downlink packets
         is_resend = False
@@ -129,19 +125,18 @@ def execute_downlink(ser_downlink, mission_folder_path):
             for i in range(len(batch)):
                 packet = batch[i]
 
-                # Do batch send - 5 packets then a stop packet
                 if isinstance(packet, CCSDS_Chunk_Packet):
                     print(
                         f"Sending: packet {packet_count} from batch {batch_num+1}")
 
-                elif isinstance(packet, CCSDS_Control_Packet):
-                    print(f"Sending: Stop packet from batch {batch_num+1}")
-                    print(packet)
+                # elif isinstance(packet, CCSDS_Control_Packet):
+                #     print(f"Sending: Stop packet from batch {batch_num+1}")
+                #     print(packet)
 
                 packet_count += 1
                 ser_downlink.write(packet.get_tx_packet())
 
-            if batch_num < len(batches) - 1:
+            if batch_num + 1 < len(batches):
                 print("Wait for ack/nack")
                 ack = ser_downlink.readline()
                 print(ack)
@@ -149,13 +144,15 @@ def execute_downlink(ser_downlink, mission_folder_path):
                 if ack == b"nack\r\n" or ack == b"":
                     print("Nack or timeout")
                     is_resend = True
-                    ser_downlink.flush()
+                    timeout_count += 1
+                    time.sleep(2)
 
                 else:
                     print(f"Received {ack}")
                     batch_num += 1
+                    timeout_count = 0
                 print()
-                time.sleep(TIME_BETWEEN_PACKETS * 5)
+                time.sleep(mission_params.TIME_BETWEEN_PACKETS)
 
                 if is_resend:
                     is_resend = False
@@ -163,7 +160,13 @@ def execute_downlink(ser_downlink, mission_folder_path):
 
             else:
                 # Sleep first before sending start
-                time.sleep(TIME_SLEEP_AFTER_START)
+                time.sleep(mission_params.TIME_BETWEEN_IMAGES_PAYLOAD)
                 break
 
+            if timeout_count > 5:
+                print("Timeout! Abort downlink!")
+                print("\n\nWaiting for commands...")
+                return
+
     print("done!")
+    print("\n\nWaiting for commands...")

@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
-from parameters import MISSION_ROOT_FILEPATH
+
+from Mission_Parameters import MISSION_ROOT_FILEPATH
 
 
 class Command():
@@ -13,13 +14,17 @@ class Command():
         return self.mission_type
 
 
-class MissionDownlinkCommand(Command):
+class MissionDownlinkCommand():
     def __init__(self, mission_type, num_images, interval, start_timestamp, down_timestamp):
-        Command.__init__(mission_type)
-        self.num_images = int(num_images)
-        self.interval = int(interval)
-        self.start_timestamp = self._process_timestamp(start_timestamp)
-        self.down_timestamp = self._process_timestamp(down_timestamp)
+
+        try:
+            self.mission_type = mission_type
+            self.num_images = int(num_images)
+            self.interval = int(interval)
+            self.start_timestamp = self._process_timestamp(start_timestamp)
+            self.down_timestamp = self._process_timestamp(down_timestamp)
+        except ValueError:
+            raise ValueError("Bad command received")
 
         # Generate list of images filepath created from this mission
         self.list_mission_datetime = self._generate_mission_images_datetime(
@@ -56,17 +61,24 @@ class MissionDownlinkCommand(Command):
             list_ts.append(i)
         for i in chop_timestamp[1].split(':'):
             list_ts.append(i)
-        list_ts = [int(y) for y in list_ts]
+
+        try:
+            list_ts = [int(y) for y in list_ts]
+        except ValueError:
+            raise ValueError("Bad command received!")
 
         dt = datetime(list_ts[0], list_ts[1],
                       list_ts[2], list_ts[3], list_ts[4], list_ts[5])
         return dt
 
     def get_mission_folder_path(self):
-        return self.get_mission_folder_path
+        return self.mission_folder_path
 
     def get_mission_datetime(self):
         return self.list_mission_datetime
 
     def get_down_timestamp(self):
         return self.down_timestamp
+
+    def get_type(self):
+        return self.mission_type
